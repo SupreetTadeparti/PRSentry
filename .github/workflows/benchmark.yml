@@ -1,0 +1,58 @@
+name: Benchmark
+
+# Run manually: Actions tab → Benchmark → Run workflow
+# or: gh workflow run benchmark.yml -f sample=200
+on:
+  workflow_dispatch:
+    inputs:
+      sample:
+        description: Number of OWASP Benchmark test cases (0 = all ~2,740)
+        default: "200"
+      model:
+        description: LLM model (blank = the LLM_MODEL repo variable)
+        default: ""
+      configs:
+        description: Configs to compare
+        default: semgrep,llm,semgrep+llm
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install --quiet -r requirements.txt
+
+      - name: Fetch OWASP Benchmark
+        run: git clone --quiet --depth 1 https://github.com/OWASP-Benchmark/BenchmarkJava ../BenchmarkJava
+
+      - name: Run benchmark
+        env:
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          LLM_BASE_URL: ${{ vars.LLM_BASE_URL || 'https://api.ai.it.ufl.edu/v1' }}
+          LLM_MODEL: ${{ inputs.model || vars.LLM_MODEL || 'gpt-oss-120b' }}
+        run: |
+          python -m bench.run_benchmark \
+            --benchmark-dir ../BenchmarkJava \
+            --sample "${{ inputs.sample }}" \
+            --configs "${{ inputs.configs }}"
+
+      - name: Publish summary
+        if: always()
+        run: |
+          report=$(ls -t bench/results/benchmark-*.md 2>/dev/null | head -1)
+          if [ -n "$report" ]; then cat "$report" >> "$GITHUB_STEP_SUMMARY"; fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: benchmark-results
+          path: bench/results/
