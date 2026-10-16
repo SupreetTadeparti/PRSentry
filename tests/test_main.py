@@ -3,6 +3,7 @@ import subprocess
 
 from reviewer import main as main_mod
 from reviewer import pipeline
+from reviewer.llm_client import LLMConfigError
 from reviewer.models import Candidate
 
 from .test_pipeline import APP, FakeLLM
@@ -38,3 +39,11 @@ def test_cli_end_to_end(tmp_path, monkeypatch, capsys):
     findings = json.loads(out.read_text())
     assert [(f["line"], f["severity"]) for f in findings] == [(5, "critical"), (9, "high")]
     assert "app.py:5" in capsys.readouterr().out
+
+    # A bad key/model stops the run with a clear annotation instead of a traceback
+    def bad_client(cfg):
+        raise LLMConfigError("Model 'gpt-4o' is not available for this API key")
+
+    monkeypatch.setattr(main_mod, "make_client", bad_client)
+    assert main_mod.main(["--path", str(repo), "--base", "main"]) == 2
+    assert "::error title=PRSentry LLM configuration::Model 'gpt-4o'" in capsys.readouterr().out

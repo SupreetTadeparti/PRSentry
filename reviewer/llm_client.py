@@ -18,7 +18,11 @@ log = logging.getLogger(__name__)
 
 
 class LLMError(RuntimeError):
-    pass
+    """A single call failed (bad JSON, refusal). The run continues without that result."""
+
+
+class LLMConfigError(RuntimeError):
+    """The key, endpoint or model is wrong. Every call would fail, so the run stops."""
 
 
 class LLMClient(Protocol):
@@ -48,8 +52,25 @@ class OpenAICompatibleClient:
         self.model = cfg.llm_model
         self._json_mode = True  # turned off if the server rejects response_format
 
+    def check_model(self) -> None:
+        """Fail fast with a helpful message if the key can't use the configured model."""
+        from openai import APIStatusError, AuthenticationError
+
+        try:
+            available = sorted(m.id for m in self.client.models.list())
+        except AuthenticationError as e:
+            raise LLMConfigError(f"LLM API key was rejected by {self.client.base_url}: {e}") from e
+        except APIStatusError as e:
+            log.info("could not list models (%s); skipping model check", e.status_code)
+            return
+        if available and self.model not in available:
+            raise LLMConfigError(
+                f"Model '{self.model}' is not available for this API key. "
+                f"Set the LLM_MODEL variable (or the llm-model input) to one of: {', '.join(available)}"
+            )
+
     def complete_json(self, system: str, user: str, schema: dict) -> dict:
-        from openai import BadRequestError
+        from openai import AuthenticationError, BadRequestError, NotFoundError, PermissionDeniedError
 
         # Not every OpenAI-compatible server supports json_schema, so the schema goes in the prompt
         system = f"{system}\n\nRespond with ONLY a JSON object matching this JSON Schema:\n{json.dumps(schema)}"
@@ -61,6 +82,8 @@ class OpenAICompatibleClient:
                 kwargs["response_format"] = {"type": "json_object"}
             try:
                 resp = self.client.chat.completions.create(**kwargs)
+            except (AuthenticationError, PermissionDeniedError, NotFoundError) as e:
+                raise LLMConfigError(f"LLM request rejected ({e.status_code}): {e}") from e
             except BadRequestError as e:
                 if self._json_mode and "response_format" in str(e):
                     log.info("server rejected response_format; falling back to prompt-only JSON")
@@ -88,16 +111,21 @@ class AnthropicClient:
     def complete_json(self, system: str, user: str, schema: dict) -> dict:
         # Structured outputs guarantee schema-valid JSON. Current Claude models reject
         # `temperature`, so depth is controlled with `effort` instead.
-        response = self.client.beta.messages.create(
-            model=self.model,
-            max_tokens=16000,
-            system=system,
-            messages=[{"role": "user", "content": user}],
-            output_config={"effort": "medium", "format": {"type": "json_schema", "schema": schema}},
-            # Security code review can trip safety classifiers; let the API retry on a fallback model
-            betas=["server-side-fallback-2026-07-01"],
-            fallbacks="default",
-        )
+        import anthropic
+
+        try:
+            response = self.client.beta.messages.create(
+                model=self.model,
+                max_tokens=16000,
+                system=system,
+                messages=[{"role": "user", "content": user}],
+                output_config={"effort": "medium", "format": {"type": "json_schema", "schema": schema}},
+                # Security code review can trip safety classifiers; let the API retry on a fallback model
+                betas=["server-side-fallback-2026-07-01"],
+                fallbacks="default",
+            )
+        except (anthropic.AuthenticationError, anthropic.PermissionDeniedError, anthropic.NotFoundError) as e:
+            raise LLMConfigError(f"Claude API request rejected ({e.status_code}): {e}") from e
         if response.stop_reason == "refusal":
             raise LLMError(f"model refused: {getattr(response.stop_details, 'category', None)}")
         text = next((b.text for b in response.content if b.type == "text"), "")
@@ -113,5 +141,7 @@ def make_client(cfg: Config) -> LLMClient:
             cfg.llm_model = "claude-opus-5-5"  # LLM_MODEL still holds the OpenAI-side default
         return AnthropicClient(cfg)
     if not cfg.llm_api_key:
-        raise LLMError("LLM_API_KEY is not set")
-    return OpenAICompatibleClient(cfg)
+        raise LLMConfigError("LLM_API_KEY is not set (add it under Settings → Secrets and variables → Actions)")
+    client = OpenAICompatibleClient(cfg)
+    client.check_model()
+    return client

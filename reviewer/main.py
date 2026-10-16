@@ -13,7 +13,7 @@ import sys
 
 from .config import Config
 from .diff import get_changed_files
-from .llm_client import make_client
+from .llm_client import LLMConfigError, make_client
 from .models import SEVERITY_RANK, Severity
 from .pipeline import review
 
@@ -51,7 +51,13 @@ def main(argv: list[str] | None = None) -> int:
     changed = get_changed_files(root, base, head)
     log.info("%d changed file(s), %d hunk(s)", len(changed), sum(len(f.hunks) for f in changed.values()))
 
-    result = review(cfg, make_client(cfg), root, changed)
+    try:
+        result = review(cfg, make_client(cfg), root, changed)
+    except LLMConfigError as e:
+        # "::error::" shows up as a red annotation on the Actions run summary
+        print(f"::error title=PRSentry LLM configuration::{e}")
+        log.error("%s", e)
+        return 2
 
     for f in result.findings:
         print(f"[{f.severity.value.upper():8}] {f.path}:{f.line}  {f.title}  ({f.cwe or '-'}, {f.confidence:.0%}, {f.source})")
