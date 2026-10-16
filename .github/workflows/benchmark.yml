@@ -8,6 +8,9 @@ on:
       sample:
         description: Number of OWASP Benchmark test cases (0 = all ~2,740)
         default: "200"
+      seed:
+        description: Sampling seed (use a different one for a held-out run)
+        default: "42"
       model:
         description: LLM model (blank = the LLM_MODEL repo variable)
         default: ""
@@ -43,6 +46,7 @@ jobs:
           python -m bench.run_benchmark \
             --benchmark-dir ../BenchmarkJava \
             --sample "${{ inputs.sample }}" \
+            --seed "${{ inputs.seed }}" \
             --configs "${{ inputs.configs }}"
 
       - name: Publish summary

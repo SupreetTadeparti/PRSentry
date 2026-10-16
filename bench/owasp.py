@@ -14,9 +14,17 @@ from dataclasses import dataclass
 
 TESTCODE_DIR = os.path.join("src", "main", "java", "org", "owasp", "benchmark", "testcode")
 
-# The servlet URL in each file names its category (e.g. "/sqli-00/BenchmarkTest00001"),
-# which would hand the answer to the LLM. Strip it before anyone sees the code.
+# Blind the test files so neither tool can tell it's looking at a benchmark:
+#  - the servlet URL names the category (e.g. "/sqli-00/BenchmarkTest00001"), which hands over the answer
+#  - the license header, package name and class name say "OWASP Benchmark", which the LLM picked up on
+#    ("in this benchmark context the hash is merely written to a file")
 _CATEGORY_URL = re.compile(r'"/[a-z]+-\d+/(BenchmarkTest\d+)"')
+_LEADING_COMMENT = re.compile(r"\A\s*/\*.*?\*/\s*", re.DOTALL)
+_TEST_NAME = re.compile(r"BenchmarkTest(\d+)")
+
+
+def blind_name(name: str) -> str:
+    return _TEST_NAME.sub(r"Handler\1", name)
 
 
 @dataclass
@@ -26,6 +34,11 @@ class TestCase:
     vulnerable: bool
     cwe: str
     source_path: str
+
+    @property
+    def file(self) -> str:
+        """Blinded file name the tools see, e.g. Handler00001.java."""
+        return f"{blind_name(self.name)}.java"
 
 
 def load_cases(benchmark_dir: str) -> list[TestCase]:
@@ -68,14 +81,18 @@ def sample_cases(cases: list[TestCase], n: int, seed: int = 42, categories: list
 
 
 def sanitize(source: str) -> str:
-    return _CATEGORY_URL.sub(r'"/test/\1"', source)
+    source = _CATEGORY_URL.sub(r'"/api/\1"', source)
+    source = _LEADING_COMMENT.sub("", source, count=1)
+    source = source.replace("org.owasp.benchmark.testcode", "com.example.webapp.handlers")
+    source = source.replace("org.owasp.benchmark", "com.example.webapp")
+    return blind_name(source)
 
 
 def materialize(cases: list[TestCase], out_dir: str) -> None:
-    """Copy sanitized test files into out_dir/<name>.java."""
+    """Copy sanitized test files into out_dir/<blinded name>.java."""
     os.makedirs(out_dir, exist_ok=True)
     for c in cases:
         with open(c.source_path, encoding="utf-8", errors="replace") as f:
             src = sanitize(f.read())
-        with open(os.path.join(out_dir, f"{c.name}.java"), "w", encoding="utf-8") as f:
+        with open(os.path.join(out_dir, c.file), "w", encoding="utf-8") as f:
             f.write(src)

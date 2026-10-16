@@ -20,9 +20,19 @@ def test_score_confusion_matrix():
     assert per_cat["xss"].youden == 0.0
 
 
-def test_sanitize_removes_category_hint():
-    src = '@WebServlet(value = "/sqli-00/BenchmarkTest00008")'
-    assert sanitize(src) == '@WebServlet(value = "/test/BenchmarkTest00008")'
+def test_sanitize_blinds_benchmark_identity():
+    src = (
+        "/**\n * OWASP Benchmark Project v1.2\n *\n * @created 2015\n */\n"
+        "package org.owasp.benchmark.testcode;\n\n"
+        "import org.owasp.benchmark.helpers.Utils;\n"
+        '@WebServlet(value = "/sqli-00/BenchmarkTest00008")\n'
+        "public class BenchmarkTest00008 extends HttpServlet {}\n"
+    )
+    out = sanitize(src)
+    assert "benchmark" not in out.lower() and "sqli" not in out and "test" not in out.lower()
+    assert out.startswith("package com.example.webapp.handlers;")
+    assert '"/api/Handler00008"' in out and "class Handler00008" in out
+    assert Case("BenchmarkTest00008", "sqli", True, "CWE-89", "").file == "Handler00008.java"
 
 
 def test_load_and_stratified_sample(tmp_path):

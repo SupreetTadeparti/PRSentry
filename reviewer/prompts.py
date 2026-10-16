@@ -42,8 +42,16 @@ A rule-based scanner flagged the code below. Scanners produce many false positiv
 - Trace where the data comes from. Is it attacker-controlled (request params, headers, body, files, env from users)?
 - Is it already sanitized, parameterized, escaped, validated or constant?
 - Is the code reachable in production, or is it a test, fixture, or example?
-Mark is_vulnerable=true only if a realistic attacker could exploit it. If it is a false positive,
-say why in `explanation` and leave `fix` empty. Be concise and specific to this code."""
+How to decide depends on the kind of finding:
+- Taint findings (injection, XSS, path traversal, SSRF, command execution incl. its arguments and
+  environment): mark is_vulnerable=true if attacker-controlled data can reach the sink. Dismiss them
+  when the data provably never does (constant, overwritten, dead branch) or is properly sanitized.
+- Weakness findings (weak hash or cipher, insecure randomness, cookies without Secure/HttpOnly,
+  untrusted data stored in session or other trusted state, hardcoded secrets): these are reportable
+  as soon as they appear in new code, even if the current use looks harmless. Code gets reused, and a
+  reviewer should not approve introducing them. Dismiss only if the scanner misidentified the code
+  (e.g. a strong algorithm, or the flag is actually set).
+If it is a false positive, say why in `explanation` and leave `fix` empty. Be concise and specific."""
 
 TRIAGE_USER = """Scanner rule: {rule_id}
 Scanner message: {message}

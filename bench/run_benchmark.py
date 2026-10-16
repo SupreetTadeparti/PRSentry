@@ -74,19 +74,20 @@ def semgrep_candidates(args, cfg: Config, work_dir: str, cases: list[TestCase]) 
             cands = parse_semgrep_json(json.load(f))
     else:
         configs = args.semgrep_config or cfg.semgrep_configs + ["p/java"]
-        cands = run_semgrep([f"{c.name}.java" for c in cases], configs, cwd=work_dir)
+        cands = run_semgrep([c.file for c in cases], configs, cwd=work_dir)
+    case_by_file = {c.file: c.name for c in cases}
     by_case: dict[str, list[Candidate]] = defaultdict(list)
-    for c in cands:
-        name = os.path.splitext(os.path.basename(c.path))[0]
-        c.path = f"{name}.java"  # make relative to work_dir regardless of where semgrep ran
-        by_case[name].append(c)
+    for cand in cands:
+        cand.path = os.path.basename(cand.path)  # relative to work_dir regardless of where semgrep ran
+        if cand.path in case_by_file:
+            by_case[case_by_file[cand.path]].append(cand)
     return by_case
 
 
-def whole_file_hunk(work_dir: str, name: str) -> Hunk:
-    with open(os.path.join(work_dir, f"{name}.java"), encoding="utf-8") as f:
+def whole_file_hunk(work_dir: str, case: TestCase) -> Hunk:
+    with open(os.path.join(work_dir, case.file), encoding="utf-8") as f:
         lines = f.read().splitlines()
-    return Hunk(f"{name}.java", 1, [(i + 1, txt) for i, txt in enumerate(lines)])
+    return Hunk(case.file, 1, [(i + 1, txt) for i, txt in enumerate(lines)])
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -152,7 +153,7 @@ def main(argv: list[str] | None = None) -> int:
             key = f"scan:{c.name}"
             found = cache.get(key)
             if found is None:
-                scanned = scan_hunk(llm, whole_file_hunk(work_dir, c.name), work_dir, 0)
+                scanned = scan_hunk(llm, whole_file_hunk(work_dir, c), work_dir, 0)
                 if scanned is None:
                     errors["llm"] += 1
                     return False
