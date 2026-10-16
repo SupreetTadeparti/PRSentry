@@ -37,9 +37,15 @@ def _extract_json(text: str) -> dict:
     """Parse JSON from a model reply, tolerating fences, leading prose, and the near-JSON
     that open models often emit (single quotes, True/False/None, unquoted keys)."""
     text = text.strip()
-    fence = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
-    if fence:
-        text = fence.group(1).strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    # Only unwrap a fence that encloses the whole reply. Fences can also appear *inside*
+    # JSON string values (e.g. a "fix" containing a code block), and those must be left alone.
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z]*\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
     start, end = text.find("{"), text.rfind("}")
     if start != -1 and end > start:
         text = text[start : end + 1]
@@ -116,11 +122,6 @@ class OpenAICompatibleClient:
                     "bad JSON from model (attempt %d, finish_reason=%s): %r",
                     attempt + 1, choice.finish_reason, content[:300],
                 )
-                if self._json_mode:
-                    # Constrained JSON decoding misbehaves on some servers/models (e.g. gpt-oss
-                    # on vLLM). Plain generation plus the parser above is more reliable there.
-                    log.info("disabling response_format json_object for the rest of this run")
-                    self._json_mode = False
                 time.sleep(1)
         raise LLMError(f"model did not return valid JSON: {last_err}")
 
