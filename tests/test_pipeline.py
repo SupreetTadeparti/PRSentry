@@ -125,3 +125,20 @@ def test_comment_rendering(tmp_path):
 def test_extract_json_tolerates_fences_and_prose():
     assert _extract_json('```json\n{"a": 1}\n```') == {"a": 1}
     assert _extract_json('Sure! Here it is: {"a": {"b": 2}} hope that helps') == {"a": {"b": 2}}
+
+
+def test_extract_json_tolerates_near_json():
+    assert _extract_json("{'is_vulnerable': True, 'cwe': None}") == {"is_vulnerable": True, "cwe": None}
+    assert _extract_json('{is_vulnerable: true, confidence: 0.9, title: "x: y"}') == {
+        "is_vulnerable": True, "confidence": 0.9, "title": "x: y"}
+
+
+def test_all_llm_failures_never_claim_clean(tmp_path):
+    class BrokenLLM:
+        def complete_json(self, *a):
+            raise LLMError("bad json")
+
+    result = _review(tmp_path, BrokenLLM())
+    assert result.incomplete and result.triage_errors == 2 and result.scan_errors == 1
+    summary = summary_body(result, [])
+    assert "Review incomplete" in summary and "No security issues found" not in summary

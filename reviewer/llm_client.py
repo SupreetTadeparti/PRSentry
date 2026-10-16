@@ -6,6 +6,7 @@ Two backends:
 """
 from __future__ import annotations
 
+import ast
 import json
 import logging
 import re
@@ -29,19 +30,34 @@ class LLMClient(Protocol):
     def complete_json(self, system: str, user: str, schema: dict) -> dict: ...
 
 
+_UNQUOTED_KEY = re.compile(r'([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)(\s*:)')
+
+
 def _extract_json(text: str) -> dict:
-    """Parse JSON from a model reply, tolerating ```json fences or leading prose."""
+    """Parse JSON from a model reply, tolerating fences, leading prose, and the near-JSON
+    that open models often emit (single quotes, True/False/None, unquoted keys)."""
     text = text.strip()
     fence = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
     if fence:
         text = fence.group(1).strip()
+    start, end = text.find("{"), text.rfind("}")
+    if start != -1 and end > start:
+        text = text[start : end + 1]
     try:
         return json.loads(text)
-    except json.JSONDecodeError:
-        start, end = text.find("{"), text.rfind("}")
-        if start != -1 and end > start:
-            return json.loads(text[start : end + 1])
-        raise
+    except json.JSONDecodeError as first_err:
+        # Python-literal style: {'is_vulnerable': True, ...}
+        try:
+            value = ast.literal_eval(text)
+            if isinstance(value, dict):
+                return value
+        except (ValueError, SyntaxError):
+            pass
+        # JS-object style: {is_vulnerable: true, ...}
+        try:
+            return json.loads(_UNQUOTED_KEY.sub(r'\1"\2"\3', text))
+        except json.JSONDecodeError:
+            raise first_err from None
 
 
 class OpenAICompatibleClient:
@@ -90,12 +106,21 @@ class OpenAICompatibleClient:
                     self._json_mode = False
                     continue
                 raise
-            content = resp.choices[0].message.content or ""
+            choice = resp.choices[0]
+            content = choice.message.content or ""
             try:
                 return _extract_json(content)
             except json.JSONDecodeError as e:
                 last_err = e
-                log.warning("bad JSON from model (attempt %d), retrying", attempt + 1)
+                log.warning(
+                    "bad JSON from model (attempt %d, finish_reason=%s): %r",
+                    attempt + 1, choice.finish_reason, content[:300],
+                )
+                if self._json_mode:
+                    # Constrained JSON decoding misbehaves on some servers/models (e.g. gpt-oss
+                    # on vLLM). Plain generation plus the parser above is more reliable there.
+                    log.info("disabling response_format json_object for the rest of this run")
+                    self._json_mode = False
                 time.sleep(1)
         raise LLMError(f"model did not return valid JSON: {last_err}")
 

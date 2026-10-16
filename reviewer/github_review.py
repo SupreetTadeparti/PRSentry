@@ -35,8 +35,15 @@ def comment_body(f: Finding) -> str:
 def summary_body(result: ReviewResult, unplaced: list[Finding]) -> str:
     n = len(result.findings)
     head = "### 🛡️ AI Security Review\n\n"
-    if n == 0:
+    if result.incomplete:
+        head += (
+            f"⚠️ **Review incomplete.** The LLM failed on {result.triage_errors} Semgrep candidate(s) and "
+            f"{result.scan_errors} diff hunk(s), so this PR was not fully checked. See the Actions log.\n\n"
+        )
+    if n == 0 and not result.incomplete:
         head += "No security issues found in the changed code."
+    elif n == 0:
+        head += "No confirmed issues among the parts that were reviewed."
     else:
         counts: dict[str, int] = {}
         for f in result.findings:
@@ -47,8 +54,6 @@ def summary_body(result: ReviewResult, unplaced: list[Finding]) -> str:
         f"\n\n<sub>Semgrep flagged {result.candidates} line(s) in this diff; the LLM dismissed "
         f"{result.dismissed} as false positives. {result.llm_only} issue(s) came from the LLM diff scan only."
     )
-    if result.triage_errors:
-        head += f" {result.triage_errors} candidate(s) could not be triaged."
     if result.truncated:
         head += f" {result.truncated} lower-priority issue(s) not shown."
     head += "</sub>"
@@ -103,7 +108,7 @@ class GitHubReviewer:
                 continue
             comments.append({"path": f.path, "line": f.line, "side": "RIGHT", "body": comment_body(f)})
 
-        if not comments and not unplaced and self._has_previous_review():
+        if not comments and not unplaced and not result.incomplete and self._has_previous_review():
             log.info("nothing new since the last review; not posting")
             return
 

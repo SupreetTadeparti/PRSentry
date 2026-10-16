@@ -16,7 +16,7 @@ inputs:
     default: https://api.ai.it.ufl.edu/v1
   llm-model:
     description: Model name
-    default: gpt-oss-20b
+    default: gpt-oss-120b
   min-confidence:
     description: Drop findings below this LLM confidence (0-1)
     default: "0.6"

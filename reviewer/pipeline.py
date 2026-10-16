@@ -21,8 +21,13 @@ class ReviewResult:
     candidates: int = 0  # Semgrep hits on changed lines
     dismissed: int = 0  # candidates the LLM judged false positives
     triage_errors: int = 0
+    scan_errors: int = 0  # diff hunks the LLM scan failed on
     llm_only: int = 0  # findings only the LLM diff scan produced
     truncated: int = 0  # findings dropped by the max_comments cap
+
+    @property
+    def incomplete(self) -> bool:
+        return bool(self.triage_errors or self.scan_errors)
 
 
 def dedupe(findings: list[Finding], window: int = 2) -> list[Finding]:
@@ -69,8 +74,8 @@ def review(cfg: Config, llm: LLMClient, root: str, changed: dict[str, ChangedFil
 
     if cfg.enable_llm_scan:
         hunks = [h for f in changed.values() for h in f.hunks][: cfg.max_hunks]
-        extra = llm_scan(llm, hunks, root, cfg.context_lines)
-        log.info("llm scan: %d issue(s) from %d hunk(s)", len(extra), len(hunks))
+        extra, result.scan_errors = llm_scan(llm, hunks, root, cfg.context_lines)
+        log.info("llm scan: %d issue(s) from %d hunk(s), %d failed", len(extra), len(hunks), result.scan_errors)
         findings.extend(extra)
 
     findings = [f for f in findings if f.confidence >= cfg.min_confidence]

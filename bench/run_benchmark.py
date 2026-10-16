@@ -114,6 +114,7 @@ def main(argv: list[str] | None = None) -> int:
     materialize(cases, work_dir)
 
     predictions: dict[str, dict[str, bool]] = {}
+    errors: dict[str, int] = defaultdict(int)  # failed LLM calls per config (counted as "not flagged")
     needs_semgrep = any(c in configs for c in ("semgrep", "semgrep+llm"))
     by_case = semgrep_candidates(args, cfg, work_dir, cases) if needs_semgrep else {}
     if "semgrep" in configs:
@@ -132,7 +133,10 @@ def main(argv: list[str] | None = None) -> int:
                 v = cache.get(key)
                 if v is None:
                     verdict = triage_one(llm, cand, work_dir, cfg.context_lines)
-                    v = verdict.model_dump(mode="json") if verdict else {}
+                    if verdict is None:
+                        errors["semgrep+llm"] += 1
+                        continue  # don't cache failures, so a re-run retries them
+                    v = verdict.model_dump(mode="json")
                     cache.put(key, v)
                 if v.get("is_vulnerable") and v.get("confidence", 0) >= cfg.min_confidence:
                     return True
@@ -148,7 +152,11 @@ def main(argv: list[str] | None = None) -> int:
             key = f"scan:{c.name}"
             found = cache.get(key)
             if found is None:
-                found = [f.model_dump(mode="json") for f in scan_hunk(llm, whole_file_hunk(work_dir, c.name), work_dir, 0)]
+                scanned = scan_hunk(llm, whole_file_hunk(work_dir, c.name), work_dir, 0)
+                if scanned is None:
+                    errors["llm"] += 1
+                    return False
+                found = [f.model_dump(mode="json") for f in scanned]
                 cache.put(key, found)
             return any(cwe_matches(f.get("cwe"), c.cwe) and f.get("confidence", 0) >= cfg.min_confidence for f in found)
 
@@ -157,6 +165,8 @@ def main(argv: list[str] | None = None) -> int:
             predictions["llm"] = dict(zip([c.name for c in cases], pool.map(scan_case, cases)))
         cache.save()
 
+    for name, n in errors.items():
+        log.warning("%s: %d LLM call(s) failed and were counted as not flagged; re-run to retry them", name, n)
     report = build_report(cases, predictions, cfg, args)
     os.makedirs(args.out, exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
