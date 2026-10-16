@@ -11,8 +11,12 @@
   triage reduces false positives without losing real issues.
 - Scoring follows the OWASP Benchmark convention: a case counts as "flagged" only if a finding's CWE
   matches the expected one (related CWEs are grouped; see `score.py`). Headline score = TPR − FPR.
-- The servlet URL in each file names its category (`/sqli-00/...`). `owasp.py` strips it so the LLM
-  can't read the answer off the page.
+- The files are blinded before any tool sees them (`owasp.sanitize`). The servlet URL names the
+  category (`/sqli-00/...`), and the license header, package and class names say "OWASP Benchmark".
+  An early run showed the model reasoning "in this benchmark context, the hash is merely written to
+  a file", so all of these are removed or renamed.
+- The triage prompt was adjusted once, on a 20-case sample (seed 42). Reported numbers come from a
+  separate held-out sample (seed 7) that wasn't used for any tuning.
 
 ## Demo app (qualitative)
 
