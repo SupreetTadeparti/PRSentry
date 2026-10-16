@@ -23,6 +23,7 @@ app = Flask(__name__)
 app.config["SECRET_KEY"] = "prsentry-demo-not-a-real-secret-7f3a9c"
 db = sqlite3.connect("app.db", check_same_thread=False)
 
+print("This is a test update to trigger a PR review from the bot. It should not be deployed.")
 
 @app.route("/users")
 def search_users():
