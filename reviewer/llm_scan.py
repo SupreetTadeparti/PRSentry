@@ -15,7 +15,8 @@ from .prompts import SCAN_SCHEMA, SCAN_SYSTEM, SCAN_USER
 log = logging.getLogger(__name__)
 
 
-def scan_hunk(llm: LLMClient, hunk: Hunk, root: str, radius: int = 20) -> list[Finding]:
+def scan_hunk(llm: LLMClient, hunk: Hunk, root: str, radius: int = 20) -> list[Finding] | None:
+    """Findings for one hunk, or None if the LLM call failed (distinct from "found nothing")."""
     user = SCAN_USER.format(
         path=hunk.path,
         hunk=hunk.text(),
@@ -25,7 +26,7 @@ def scan_hunk(llm: LLMClient, hunk: Hunk, root: str, radius: int = 20) -> list[F
         data = llm.complete_json(SCAN_SYSTEM, user, SCAN_SCHEMA)
     except LLMError as e:
         log.warning("llm scan failed for %s:%d: %s", hunk.path, hunk.start, e)
-        return []
+        return None
 
     added = {no for no, _ in hunk.lines}
     findings = []
@@ -54,7 +55,8 @@ def scan_hunk(llm: LLMClient, hunk: Hunk, root: str, radius: int = 20) -> list[F
     return findings
 
 
-def llm_scan(llm: LLMClient, hunks: list[Hunk], root: str, radius: int = 20, workers: int = 4) -> list[Finding]:
+def llm_scan(llm: LLMClient, hunks: list[Hunk], root: str, radius: int = 20, workers: int = 4) -> tuple[list[Finding], int]:
+    """Returns (findings, number of hunks whose scan failed)."""
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        results = pool.map(lambda h: scan_hunk(llm, h, root, radius), hunks)
-    return [f for batch in results for f in batch]
+        results = list(pool.map(lambda h: scan_hunk(llm, h, root, radius), hunks))
+    return [f for batch in results if batch for f in batch], sum(r is None for r in results)

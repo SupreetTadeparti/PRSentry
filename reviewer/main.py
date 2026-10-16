@@ -66,6 +66,12 @@ def main(argv: list[str] | None = None) -> int:
         f"dismissed by LLM: {result.dismissed}, LLM-only: {result.llm_only}"
     )
 
+    if result.incomplete:
+        print(
+            f"::warning title=PRSentry review incomplete::LLM failed on {result.triage_errors} candidate(s) "
+            f"and {result.scan_errors} hunk(s); see the log for the raw model output"
+        )
+
     if args.json_out:
         with open(args.json_out, "w", encoding="utf-8") as fh:
             json.dump([f.model_dump(mode="json") for f in result.findings], fh, indent=2)
