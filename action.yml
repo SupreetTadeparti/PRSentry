@@ -1,0 +1,63 @@
+name: AI Security Reviewer
+description: Semgrep finds security issue candidates in a PR diff; an LLM filters false positives, explains real issues and suggests fixes as inline review comments.
+branding:
+  icon: shield
+  color: red
+
+inputs:
+  llm-api-key:
+    description: API key for the LLM provider
+    required: true
+  llm-provider:
+    description: '"openai" (any OpenAI-compatible API, e.g. UF NaviGator) or "anthropic" (Claude API)'
+    default: openai
+  llm-base-url:
+    description: Base URL for the OpenAI-compatible API
+    default: https://api.ai.it.ufl.edu/v1
+  llm-model:
+    description: Model name
+    default: gpt-4o
+  min-confidence:
+    description: Drop findings below this LLM confidence (0-1)
+    default: "0.6"
+  max-comments:
+    description: Maximum inline comments per run
+    default: "15"
+  enable-llm-scan:
+    description: Also ask the LLM to scan diff hunks for issues Semgrep misses (auth, IDOR, logic)
+    default: "true"
+  fail-on:
+    description: Fail the check if any finding is at or above this severity (critical|high|medium|low). Empty = never fail.
+    default: ""
+  github-token:
+    description: Token used to post the review
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Install reviewer
+      shell: bash
+      run: pip install --quiet -r "${{ github.action_path }}/requirements.txt"
+
+    - name: Run security review
+      shell: bash
+      env:
+        PYTHONPATH: ${{ github.action_path }}
+        LLM_API_KEY: ${{ inputs.llm-api-key }}
+        LLM_PROVIDER: ${{ inputs.llm-provider }}
+        LLM_BASE_URL: ${{ inputs.llm-base-url }}
+        LLM_MODEL: ${{ inputs.llm-model }}
+        MIN_CONFIDENCE: ${{ inputs.min-confidence }}
+        MAX_COMMENTS: ${{ inputs.max-comments }}
+        ENABLE_LLM_SCAN: ${{ inputs.enable-llm-scan }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        FAIL_ON: ${{ inputs.fail-on }}
+      run: |
+        args=(--path "$GITHUB_WORKSPACE" --post --json-out "$RUNNER_TEMP/security-findings.json")
+        if [ -n "$FAIL_ON" ]; then args+=(--fail-on "$FAIL_ON"); fi
+        python -m reviewer.main "${args[@]}"
